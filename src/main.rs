@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use axum::{response::{Html, IntoResponse}, extract::Path, routing::get, Router};
 use tokio::net::TcpListener;
 use std::path::{Path as FsPath};
@@ -5,13 +6,14 @@ use std::fs;
 use axum::body::Body;
 use axum::http::{Response, StatusCode};
 use chrono::prelude::*;
+use clap::{Command, Arg};
 
-async fn static_or_dir(path: Option<Path<String>>) -> impl IntoResponse {
+async fn static_or_dir(base_path: Arc<String>, path: Option<Path<String>>) -> impl IntoResponse {
     let path = match path {
         Some(Path(p)) => p,
         None => "".to_string(),
     };
-    let fs_path = FsPath::new(".").join(&path);
+    let fs_path = FsPath::new(base_path.as_str()).join(&path);
     if fs_path.is_dir() {
         let entries = match fs::read_dir(&fs_path) {
             Ok(e) => e,
@@ -65,8 +67,8 @@ async fn static_or_dir(path: Option<Path<String>>) -> impl IntoResponse {
             } else {
                 ("-".to_string(), "-".to_string())
             };
-            let padding = " ".repeat(50_usize.saturating_sub(display_name.len())); // 指定數字類型為 i32
-            html.push_str(&format!("<a href=\"/{}\">{}</a>{}{} {:>10}\n", href, display_name, padding, date_str, size_str)); // 調整寬度以確保對齊
+            let padding = " ".repeat(50_usize.saturating_sub(display_name.len()));
+            html.push_str(&format!("<a href=\"/{}\">{}</a>{}{} {:>10}\n", href, display_name, padding, date_str, size_str));
         }
         html.push_str("</pre><hr>\n</body>\n</html>");
         Html(html).into_response()
@@ -89,13 +91,50 @@ async fn static_or_dir(path: Option<Path<String>>) -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
-    let app = Router::new()
-        .route("/*path", get(static_or_dir))
-        .route("/", get(static_or_dir));
+    let matches = Command::new("Static File Server")
+        .version("0.1.0")
+        .author("Your Name <youremail@example.com>")
+        .about("A simple static file server")
+        .arg(Arg::new("host")
+            .short('H')
+            .long("host")
+            .value_name("HOST")
+            .help("Sets the host address")
+            .value_parser(clap::value_parser!(String))
+            .default_value("127.0.0.1"))
+        .arg(Arg::new("port")
+            .short('p')
+            .long("port")
+            .value_name("PORT")
+            .help("Sets the port number")
+            .value_parser(clap::value_parser!(u16))
+            .default_value("3000"))
+        .arg(Arg::new("base")
+            .short('b')
+            .long("base")
+            .value_name("BASE")
+            .help("Sets the base path")
+            .value_parser(clap::value_parser!(String))
+            .default_value("."))
+        .get_matches();
 
-    let addr = "127.0.0.1:3000";
+    let host = matches.get_one::<String>("host").unwrap();
+    let port = matches.get_one::<u16>("port").unwrap();
+    let base_path = Arc::new(matches.get_one::<String>("base").unwrap().clone());
+
+    let addr = format!("{}:{}", host, port);
     println!("Server running at http://{}", addr);
 
-    let listener = TcpListener::bind(addr).await.unwrap();
+    let app = Router::new()
+        .route("/*path", get({
+            let base_path = base_path.clone();
+            move |path| static_or_dir(base_path.clone(), path)
+        }))
+        .route("/", get({
+            let base_path = base_path.clone();
+            move |path| static_or_dir(base_path.clone(), path)
+        }));
+
+    let listener = TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
