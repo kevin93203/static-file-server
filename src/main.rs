@@ -5,6 +5,7 @@ use axum::{
     response::{Html, IntoResponse},
     routing::get,
     Router,
+    body::Body,
 };
 use chrono::prelude::*;
 use clap::{Arg, Command};
@@ -278,7 +279,7 @@ async fn serve_static(
             .header(header::CONTENT_TYPE, mime.as_ref())
             .header(header::LAST_MODIFIED, modified_str)
             .header(header::CACHE_CONTROL, "public, max-age=3600")
-            .body(axum::body::Body::from(content))
+            .body(Body::from(content))
             .map_err(|e| ServerError::ServerError(e.to_string()))?;
             
         Ok(response)
